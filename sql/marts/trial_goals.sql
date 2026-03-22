@@ -1,5 +1,5 @@
--- Mart model at organization grain with one boolean flag per trial goal.
--- Goal hypotheses are based on conversion-driver analysis and product-value logic.
+-- Organization-level mart, one goal flag per trial goal.
+-- Goal hypotheses come from conversion-driver analysis plus product-value logic.
 
 with events as (
     select *

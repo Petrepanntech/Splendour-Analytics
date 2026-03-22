@@ -1,4 +1,4 @@
--- Mart model at organization grain: full trial activation status.
+-- Organization-level mart with full trial activation status.
 
 with goals as (
     select *

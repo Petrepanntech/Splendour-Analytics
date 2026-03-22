@@ -1,5 +1,5 @@
--- Staging model at event grain: one row per in-trial product event.
--- Replace {{ source('raw', 'trial_events') }} with your raw table reference if not using dbt.
+-- Event-level staging model, one row per in-trial product event.
+-- If you are not using dbt, swap {{ source('raw', 'trial_events') }} for your raw table.
 
 with source_events as (
     select

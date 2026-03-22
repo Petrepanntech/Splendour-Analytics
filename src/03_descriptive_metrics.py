@@ -276,10 +276,10 @@ def main() -> None:
     org = org_level_metrics(df)
     save_tables_and_charts(df, org, args)
 
-    print(f"organizations={org['organization_id'].nunique()}")
-    print(f"conversion_rate={org['converted'].mean():.4f}")
-    print(f"share_multi_day_active={org['is_multi_day_active'].mean():.4f}")
-    print(f"median_time_to_convert_days={org.loc[org['converted']==1, 'time_to_convert_days'].median():.2f}")
+    print(f"organizations: {org['organization_id'].nunique()}")
+    print(f"conversion rate: {org['converted'].mean():.4f}")
+    print(f"share multi-day active: {org['is_multi_day_active'].mean():.4f}")
+    print(f"median time to convert, days: {org.loc[org['converted']==1, 'time_to_convert_days'].median():.2f}")
 
 
 if __name__ == "__main__":

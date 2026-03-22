@@ -44,13 +44,13 @@ def parse_args() -> argparse.Namespace:
         "--input",
         type=Path,
         default=Path("data/raw/da_task.csv"),
-        help="Input trial event CSV path",
+        help="Path to trial event CSV",
     )
     parser.add_argument(
         "--output_dir",
         type=Path,
         default=Path("outputs"),
-        help="Output directory",
+        help="Folder for outputs",
     )
     return parser.parse_args()
 
@@ -70,7 +70,7 @@ def load_and_clean(path: Path) -> pd.DataFrame:
     }
     missing = expected.difference(df.columns)
     if missing:
-        raise ValueError(f"Missing required columns: {sorted(missing)}")
+        raise ValueError(f"Required columns are missing: {sorted(missing)}")
 
     for col in ["timestamp", "converted_at", "trial_start", "trial_end"]:
         df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
@@ -79,7 +79,7 @@ def load_and_clean(path: Path) -> pd.DataFrame:
         df["converted"].astype(str).str.strip().str.lower().map({"true": 1, "false": 0})
     )
     if df["converted"].isna().any():
-        raise ValueError("Found unexpected values in converted column")
+        raise ValueError("Unexpected values found in converted")
     df["converted"] = df["converted"].astype(int)
 
     before_dups = len(df)
@@ -94,10 +94,10 @@ def load_and_clean(path: Path) -> pd.DataFrame:
     df["trial_day"] = (df["timestamp"] - df["trial_start"]).dt.days
     df["event_date"] = df["timestamp"].dt.date
 
-    print(f"rows_before_dedup={before_dups}")
-    print(f"rows_after_dedup={after_dups}")
-    print(f"rows_after_quality_filters={len(df)}")
-    print(f"org_count={df['organization_id'].nunique()}")
+    print(f"rows before dedupe: {before_dups}")
+    print(f"rows after dedupe: {after_dups}")
+    print(f"rows after filters: {len(df)}")
+    print(f"organizations: {df['organization_id'].nunique()}")
 
     return df
 
@@ -207,8 +207,8 @@ def model_logistic_coefficients(features: pd.DataFrame) -> pd.DataFrame:
 
     train_auc = roc_auc_score(y_train, clf.predict_proba(X_train)[:, 1])
     test_auc = roc_auc_score(y_test, clf.predict_proba(X_test)[:, 1])
-    print(f"logit_train_auc={train_auc:.4f}")
-    print(f"logit_test_auc={test_auc:.4f}")
+    print(f"logit train auc: {train_auc:.4f}")
+    print(f"logit test auc: {test_auc:.4f}")
 
     coef = pd.DataFrame(
         {
@@ -231,7 +231,7 @@ def model_importance(features: pd.DataFrame) -> pd.DataFrame:
     X = features[feature_cols].copy()
     y = features["converted"].copy()
 
-    # Avoid degenerate columns.
+    # Drop flat columns before training.
     keep = X.nunique(dropna=False) > 1
     X = X.loc[:, keep]
 
@@ -250,8 +250,8 @@ def model_importance(features: pd.DataFrame) -> pd.DataFrame:
 
     train_auc = roc_auc_score(y_train, clf.predict_proba(X_train)[:, 1])
     test_auc = roc_auc_score(y_test, clf.predict_proba(X_test)[:, 1])
-    print(f"train_auc={train_auc:.4f}")
-    print(f"test_auc={test_auc:.4f}")
+    print(f"rf train auc: {train_auc:.4f}")
+    print(f"rf test auc: {test_auc:.4f}")
 
     coef = pd.DataFrame(
         {
@@ -276,7 +276,7 @@ def engagement_segmentation(features: pd.DataFrame) -> pd.DataFrame:
         ]
     ].copy()
 
-    # Rank-to-percentile avoids qcut edge-collision issues on repeated values.
+    # Percentile bins handle repeated values cleanly.
     seg["active_days_segment"] = pd.cut(
         seg["active_days"].rank(method="average", pct=True),
         bins=[0.0, 0.33, 0.67, 1.0],
@@ -387,7 +387,7 @@ def choose_goals(features: pd.DataFrame, drivers: pd.DataFrame) -> tuple[pd.Data
 
     goal_summary = pd.DataFrame(summary_rows).sort_values("lift", ascending=False)
 
-    # Attach the strongest activity evidence among each goal's candidate activities.
+    # Pick the strongest supporting activity per goal.
     goal_evidence_rows = []
     for goal_name in goal_summary["goal_name"]:
         if goal_name == "is_activated":
@@ -451,19 +451,19 @@ def save_outputs(
     tables_dir.mkdir(parents=True, exist_ok=True)
     figs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Method A: Fisher exact tests with BH multiple-testing correction.
+    # Method A, Fisher exact tests with BH correction.
     drivers.to_csv(tables_dir / "conversion_driver_activity_stats.csv", index=False)
 
-    # Method B: Logistic regression coefficients and odds-ratio view.
+    # Method B, logistic coefficients and odds ratios.
     logit_coef.to_csv(tables_dir / "conversion_driver_logistic_coefficients.csv", index=False)
 
-    # Method C: Random forest feature importance.
+    # Method C, random forest feature importance.
     importance.to_csv(tables_dir / "conversion_driver_model_coefficients.csv", index=False)
 
-    # Method D: Engagement segmentation by activity depth and module breadth.
+    # Method D, engagement segments by depth and breadth.
     segments.to_csv(tables_dir / "conversion_driver_engagement_segments.csv", index=False)
 
-    # Method E: Bootstrap stability for top activity lifts.
+    # Method E, bootstrap stability for top lifts.
     stability.to_csv(tables_dir / "conversion_driver_bootstrap_stability.csv", index=False)
 
     goals_org.to_csv(tables_dir / "org_trial_goals_and_activation.csv", index=False)
@@ -494,7 +494,7 @@ def save_outputs(
     plt.barh(top_drivers["activity_name"], top_drivers["lift"], color="#1f77b4")
     plt.axvline(1.0, color="black", linestyle="--", linewidth=1)
     plt.title("Top Activities by Conversion Lift")
-    plt.xlabel("Lift (conversion with activity / without activity)")
+    plt.xlabel("Lift, conversion with activity divided by conversion without activity")
     plt.tight_layout()
     plt.savefig(figs_dir / "top_activity_lift.png", dpi=150)
     plt.close()
@@ -538,8 +538,8 @@ def main() -> None:
 
     activated_conv = goals_org.loc[goals_org["is_activated"] == 1, "converted"].mean()
     non_activated_conv = goals_org.loc[goals_org["is_activated"] == 0, "converted"].mean()
-    print(f"activation_conversion_rate={activated_conv:.4f}")
-    print(f"non_activation_conversion_rate={non_activated_conv:.4f}")
+    print(f"conversion rate, activated orgs: {activated_conv:.4f}")
+    print(f"conversion rate, non-activated orgs: {non_activated_conv:.4f}")
 
 
 if __name__ == "__main__":
