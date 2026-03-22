@@ -55,6 +55,7 @@ python src/03_descriptive_metrics.py --input data/raw/da_task.csv --output_dir o
 
 3. Conversion-driver analysis using multiple methods
 - Method A: Activity-level conversion lift + Fisher exact tests.
+- Applied Benjamini-Hochberg correction (`p_value_adj_bh`) to control false discoveries across many activity tests.
 - Method B: Supervised model (Random Forest) to rank feature importance.
 
 4. Define Trial Goals (hypothesis-driven, product-value grounded)
@@ -101,6 +102,7 @@ Generated in `outputs/tables/` and `outputs/figures/`:
 - Core KPIs: conversion rate, median time to convert, event depth, active day depth.
 - Module adoption by conversion segment.
 - Trial-day engagement curve.
+- Engagement curve is computed as: active organizations on day $d$ / total organizations in cohort.
 - Conversion by module breadth.
 - Activity volume ranking.
 - Conversion by activation status.

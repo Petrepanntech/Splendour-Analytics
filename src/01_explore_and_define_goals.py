@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from scipy.stats import fisher_exact
+from statsmodels.stats.multitest import multipletests
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
@@ -168,7 +169,10 @@ def activity_driver_table(features: pd.DataFrame) -> pd.DataFrame:
             }
         )
 
-    out = pd.DataFrame(rows).sort_values(["p_value", "lift"], ascending=[True, False])
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out["p_value_adj_bh"] = multipletests(out["p_value"].values, method="fdr_bh")[1]
+    out = out.sort_values(["p_value_adj_bh", "lift"], ascending=[True, False])
     return out
 
 
@@ -245,14 +249,51 @@ def choose_goals(features: pd.DataFrame, drivers: pd.DataFrame) -> tuple[pd.Data
 
     goal_summary = pd.DataFrame(summary_rows).sort_values("lift", ascending=False)
 
-    # Add interpretability evidence from activity-level stats.
-    top_evidence = drivers.loc[:, ["activity_name", "lift", "p_value", "coverage_rate"]].copy()
-    return org_goals, goal_summary.merge(
-        top_evidence.add_prefix("activity_evidence__"),
-        left_index=True,
-        right_index=True,
-        how="left",
-    )
+    # Attach the strongest activity evidence among each goal's candidate activities.
+    goal_evidence_rows = []
+    for goal_name in goal_summary["goal_name"]:
+        if goal_name == "is_activated":
+            goal_evidence_rows.append(
+                {
+                    "goal_name": goal_name,
+                    "activity_evidence__activity_name": pd.NA,
+                    "activity_evidence__lift": pd.NA,
+                    "activity_evidence__p_value": pd.NA,
+                    "activity_evidence__p_value_adj_bh": pd.NA,
+                    "activity_evidence__coverage_rate": pd.NA,
+                }
+            )
+            continue
+
+        candidates = GOAL_CANDIDATES.get(goal_name, [])
+        candidates_df = drivers.loc[drivers["activity_name"].isin(candidates)].copy()
+        if candidates_df.empty:
+            goal_evidence_rows.append(
+                {
+                    "goal_name": goal_name,
+                    "activity_evidence__activity_name": pd.NA,
+                    "activity_evidence__lift": pd.NA,
+                    "activity_evidence__p_value": pd.NA,
+                    "activity_evidence__p_value_adj_bh": pd.NA,
+                    "activity_evidence__coverage_rate": pd.NA,
+                }
+            )
+            continue
+
+        top_row = candidates_df.sort_values(["p_value_adj_bh", "lift"], ascending=[True, False]).iloc[0]
+        goal_evidence_rows.append(
+            {
+                "goal_name": goal_name,
+                "activity_evidence__activity_name": top_row["activity_name"],
+                "activity_evidence__lift": top_row["lift"],
+                "activity_evidence__p_value": top_row["p_value"],
+                "activity_evidence__p_value_adj_bh": top_row["p_value_adj_bh"],
+                "activity_evidence__coverage_rate": top_row["coverage_rate"],
+            }
+        )
+
+    goal_evidence = pd.DataFrame(goal_evidence_rows)
+    return org_goals, goal_summary.merge(goal_evidence, on="goal_name", how="left")
 
 
 def save_outputs(

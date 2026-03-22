@@ -146,12 +146,12 @@ def save_tables_and_charts(df: pd.DataFrame, org: pd.DataFrame, args: argparse.N
         .mean()
     )
 
+    total_orgs = org["organization_id"].nunique()
     trial_day_retention = (
-        df.groupby(["organization_id", "trial_day"], as_index=False)
-        .size()
-        .assign(active=1)
-        .groupby("trial_day", as_index=False)["active"]
-        .mean()
+        df.groupby("trial_day")["organization_id"]
+        .nunique()
+        .div(max(total_orgs, 1))
+        .reset_index(name="active")
         .sort_values("trial_day")
     )
 
