@@ -1,0 +1,13 @@
+module,converted,used
+used_absence,0,0.042105263157894736
+used_absence,1,0.038834951456310676
+used_communication,0,0.15921052631578947
+used_communication,1,0.11650485436893204
+used_mobile_usage,0,0.4723684210526316
+used_mobile_usage,1,0.470873786407767
+used_payroll,0,0.019736842105263157
+used_payroll,1,0.0048543689320388345
+used_scheduling,0,0.875
+used_scheduling,1,0.9077669902912622
+used_time_tracking,0,0.21447368421052632
+used_time_tracking,1,0.23300970873786409
