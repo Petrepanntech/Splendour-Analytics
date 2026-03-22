@@ -1,0 +1,7 @@
+active_days_segment,module_breadth_segment,organizations,conversion_rate,median_events,median_active_days,median_unique_activities
+low,low,357,0.20448179271708683,2.0,1.0,1.0
+low,mid,180,0.22777777777777777,6.0,1.0,2.0
+low,high,70,0.21428571428571427,16.0,1.0,3.0
+high,low,38,0.21052631578947367,8.0,2.0,1.0
+high,mid,54,0.16666666666666666,18.5,2.0,2.0
+high,high,267,0.2247191011235955,155.0,8.0,5.0

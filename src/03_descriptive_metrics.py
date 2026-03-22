@@ -92,6 +92,7 @@ def org_level_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
     org["events_per_active_day"] = org["total_events"] / org["active_days"].clip(lower=1)
     org["time_to_convert_days"] = (org["converted_at"] - org["trial_start"]).dt.total_seconds() / (3600 * 24)
+    org["is_multi_day_active"] = (org["active_days"] >= 2).astype(int)
 
     for module, activities in CORE_MODULES.items():
         used = (
@@ -121,6 +122,7 @@ def save_tables_and_charts(df: pd.DataFrame, org: pd.DataFrame, args: argparse.N
                 "organizations",
                 "events",
                 "conversion_rate",
+                "share_multi_day_active",
                 "median_time_to_convert_days",
                 "median_events_per_org",
                 "median_active_days_per_org",
@@ -130,12 +132,31 @@ def save_tables_and_charts(df: pd.DataFrame, org: pd.DataFrame, args: argparse.N
                 org["organization_id"].nunique(),
                 len(df),
                 org["converted"].mean(),
+                org["is_multi_day_active"].mean(),
                 org.loc[org["converted"] == 1, "time_to_convert_days"].median(),
                 org["total_events"].median(),
                 org["active_days"].median(),
                 org["module_breadth"].median(),
             ],
         }
+    )
+
+    active_day_distribution = (
+        org.groupby("active_days", as_index=False)
+        .agg(organizations=("organization_id", "nunique"))
+        .sort_values("active_days")
+    )
+
+    conversion_by_multi_day_flag = (
+        org.groupby("is_multi_day_active", as_index=False)["converted"]
+        .mean()
+        .rename(columns={"converted": "conversion_rate"})
+    )
+
+    time_to_convert_distribution = (
+        org.loc[org["converted"] == 1, ["organization_id", "time_to_convert_days"]]
+        .dropna(subset=["time_to_convert_days"])
+        .sort_values("time_to_convert_days")
     )
 
     module_cols = [c for c in org.columns if c.startswith("used_")]
@@ -174,6 +195,9 @@ def save_tables_and_charts(df: pd.DataFrame, org: pd.DataFrame, args: argparse.N
     conversion_by_breadth.to_csv(out_tables / "conversion_by_module_breadth.csv", index=False)
     activity_volume.to_csv(out_tables / "activity_volume.csv", index=False)
     org.to_csv(out_tables / "org_level_metrics.csv", index=False)
+    active_day_distribution.to_csv(out_tables / "active_day_distribution.csv", index=False)
+    conversion_by_multi_day_flag.to_csv(out_tables / "conversion_by_multi_day_flag.csv", index=False)
+    time_to_convert_distribution.to_csv(out_tables / "time_to_convert_distribution.csv", index=False)
 
     if args.goal_table.exists():
         goals = pd.read_csv(args.goal_table)
@@ -221,6 +245,30 @@ def save_tables_and_charts(df: pd.DataFrame, org: pd.DataFrame, args: argparse.N
     plt.savefig(out_figs / "conversion_by_module_breadth.png", dpi=150)
     plt.close()
 
+    plt.figure(figsize=(8, 5))
+    sns.barplot(data=active_day_distribution, x="active_days", y="organizations", color="#72b7b2")
+    plt.title("Active-Day Distribution Across Organizations")
+    plt.xlabel("Number of active trial days")
+    plt.ylabel("Organizations")
+    plt.tight_layout()
+    plt.savefig(out_figs / "active_day_distribution.png", dpi=150)
+    plt.close()
+
+    plt.figure(figsize=(8, 5))
+    sns.histplot(
+        data=time_to_convert_distribution,
+        x="time_to_convert_days",
+        bins=20,
+        color="#e45756",
+        edgecolor="white",
+    )
+    plt.title("Time-to-Convert Distribution (Converted Orgs)")
+    plt.xlabel("Days from trial start to conversion")
+    plt.ylabel("Organizations")
+    plt.tight_layout()
+    plt.savefig(out_figs / "time_to_convert_distribution.png", dpi=150)
+    plt.close()
+
 
 def main() -> None:
     args = parse_args()
@@ -230,6 +278,7 @@ def main() -> None:
 
     print(f"organizations={org['organization_id'].nunique()}")
     print(f"conversion_rate={org['converted'].mean():.4f}")
+    print(f"share_multi_day_active={org['is_multi_day_active'].mean():.4f}")
     print(f"median_time_to_convert_days={org.loc[org['converted']==1, 'time_to_convert_days'].median():.2f}")
 
 

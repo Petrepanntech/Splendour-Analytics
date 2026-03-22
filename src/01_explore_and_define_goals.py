@@ -11,6 +11,7 @@ import seaborn as sns
 from scipy.stats import fisher_exact
 from statsmodels.stats.multitest import multipletests
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
 
@@ -133,6 +134,9 @@ def build_org_features(df: pd.DataFrame) -> pd.DataFrame:
     for c in activity_cols:
         features[f"did__{c}"] = (features[c] > 0).astype(int)
 
+    did_cols = [c for c in features.columns if c.startswith("did__")]
+    features["module_breadth"] = features[did_cols].sum(axis=1)
+
     return features
 
 
@@ -176,6 +180,47 @@ def activity_driver_table(features: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def model_logistic_coefficients(features: pd.DataFrame) -> pd.DataFrame:
+    feature_cols = [
+        c
+        for c in features.columns
+        if c not in {"organization_id", "converted", "trial_start", "trial_end", "converted_at"}
+    ]
+
+    X = features[feature_cols].copy()
+    y = features["converted"].copy()
+
+    keep = X.nunique(dropna=False) > 1
+    X = X.loc[:, keep]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42, stratify=y
+    )
+
+    clf = LogisticRegression(
+        class_weight="balanced",
+        max_iter=3000,
+        random_state=42,
+        solver="liblinear",
+    )
+    clf.fit(X_train, y_train)
+
+    train_auc = roc_auc_score(y_train, clf.predict_proba(X_train)[:, 1])
+    test_auc = roc_auc_score(y_test, clf.predict_proba(X_test)[:, 1])
+    print(f"logit_train_auc={train_auc:.4f}")
+    print(f"logit_test_auc={test_auc:.4f}")
+
+    coef = pd.DataFrame(
+        {
+            "feature": X.columns,
+            "coef_log_odds": clf.coef_.ravel(),
+        }
+    )
+    coef["odds_ratio"] = np.exp(coef["coef_log_odds"])
+    coef["abs_coef"] = np.abs(coef["coef_log_odds"])
+    return coef.sort_values("abs_coef", ascending=False)
+
+
 def model_importance(features: pd.DataFrame) -> pd.DataFrame:
     feature_cols = [
         c
@@ -217,6 +262,99 @@ def model_importance(features: pd.DataFrame) -> pd.DataFrame:
     ).sort_values("abs_coef", ascending=False)
 
     return coef
+
+
+def engagement_segmentation(features: pd.DataFrame) -> pd.DataFrame:
+    seg = features[
+        [
+            "organization_id",
+            "converted",
+            "total_events",
+            "active_days",
+            "unique_activities",
+            "module_breadth",
+        ]
+    ].copy()
+
+    # Rank-to-percentile avoids qcut edge-collision issues on repeated values.
+    seg["active_days_segment"] = pd.cut(
+        seg["active_days"].rank(method="average", pct=True),
+        bins=[0.0, 0.33, 0.67, 1.0],
+        labels=["low", "mid", "high"],
+        include_lowest=True,
+    )
+    seg["module_breadth_segment"] = pd.cut(
+        seg["module_breadth"].rank(method="average", pct=True),
+        bins=[0.0, 0.33, 0.67, 1.0],
+        labels=["low", "mid", "high"],
+        include_lowest=True,
+    )
+
+    seg_out = (
+        seg.groupby(["active_days_segment", "module_breadth_segment"], dropna=False, as_index=False)
+        .agg(
+            organizations=("organization_id", "nunique"),
+            conversion_rate=("converted", "mean"),
+            median_events=("total_events", "median"),
+            median_active_days=("active_days", "median"),
+            median_unique_activities=("unique_activities", "median"),
+        )
+        .sort_values(["active_days_segment", "module_breadth_segment"])
+    )
+
+    return seg_out
+
+
+def bootstrap_lift_stability(
+    features: pd.DataFrame,
+    drivers: pd.DataFrame,
+    top_k: int = 15,
+    n_boot: int = 300,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    rng = np.random.default_rng(random_state)
+
+    top_activities = drivers.sort_values(["p_value_adj_bh", "lift"], ascending=[True, False]).head(top_k)
+
+    rows = []
+    for activity in top_activities["activity_name"]:
+        did_col = f"did__{activity}"
+        if did_col not in features.columns:
+            continue
+
+        lifts = []
+        for _ in range(n_boot):
+            sample_idx = rng.integers(0, len(features), len(features))
+            sample = features.iloc[sample_idx]
+
+            exposed = sample[did_col] == 1
+            exp_total = int(exposed.sum())
+            nexp_total = int((~exposed).sum())
+            if exp_total == 0 or nexp_total == 0:
+                continue
+
+            exp_conv = sample.loc[exposed, "converted"].mean()
+            nexp_conv = sample.loc[~exposed, "converted"].mean()
+            lifts.append(exp_conv / max(nexp_conv, 1e-9))
+
+        if not lifts:
+            continue
+
+        arr = np.array(lifts)
+        rows.append(
+            {
+                "activity_name": activity,
+                "bootstrap_n": int(arr.size),
+                "lift_mean": float(arr.mean()),
+                "lift_ci_low_95": float(np.quantile(arr, 0.025)),
+                "lift_ci_high_95": float(np.quantile(arr, 0.975)),
+                "share_bootstraps_lift_gt_1": float((arr > 1.0).mean()),
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values(
+        ["share_bootstraps_lift_gt_1", "lift_mean"], ascending=[False, False]
+    )
 
 
 def choose_goals(features: pd.DataFrame, drivers: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -300,7 +438,10 @@ def save_outputs(
     df: pd.DataFrame,
     features: pd.DataFrame,
     drivers: pd.DataFrame,
+    logit_coef: pd.DataFrame,
     importance: pd.DataFrame,
+    segments: pd.DataFrame,
+    stability: pd.DataFrame,
     goals_org: pd.DataFrame,
     goals_summary: pd.DataFrame,
     output_dir: Path,
@@ -310,8 +451,21 @@ def save_outputs(
     tables_dir.mkdir(parents=True, exist_ok=True)
     figs_dir.mkdir(parents=True, exist_ok=True)
 
+    # Method A: Fisher exact tests with BH multiple-testing correction.
     drivers.to_csv(tables_dir / "conversion_driver_activity_stats.csv", index=False)
+
+    # Method B: Logistic regression coefficients and odds-ratio view.
+    logit_coef.to_csv(tables_dir / "conversion_driver_logistic_coefficients.csv", index=False)
+
+    # Method C: Random forest feature importance.
     importance.to_csv(tables_dir / "conversion_driver_model_coefficients.csv", index=False)
+
+    # Method D: Engagement segmentation by activity depth and module breadth.
+    segments.to_csv(tables_dir / "conversion_driver_engagement_segments.csv", index=False)
+
+    # Method E: Bootstrap stability for top activity lifts.
+    stability.to_csv(tables_dir / "conversion_driver_bootstrap_stability.csv", index=False)
+
     goals_org.to_csv(tables_dir / "org_trial_goals_and_activation.csv", index=False)
     goals_summary.to_csv(tables_dir / "goal_summary.csv", index=False)
 
@@ -363,10 +517,24 @@ def main() -> None:
     df = load_and_clean(args.input)
     features = build_org_features(df)
     drivers = activity_driver_table(features)
+    logit_coef = model_logistic_coefficients(features)
     importance = model_importance(features)
+    segments = engagement_segmentation(features)
+    stability = bootstrap_lift_stability(features, drivers)
     goals_org, goals_summary = choose_goals(features, drivers)
 
-    save_outputs(df, features, drivers, importance, goals_org, goals_summary, args.output_dir)
+    save_outputs(
+        df,
+        features,
+        drivers,
+        logit_coef,
+        importance,
+        segments,
+        stability,
+        goals_org,
+        goals_summary,
+        args.output_dir,
+    )
 
     activated_conv = goals_org.loc[goals_org["is_activated"] == 1, "converted"].mean()
     non_activated_conv = goals_org.loc[goals_org["is_activated"] == 0, "converted"].mean()
